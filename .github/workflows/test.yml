@@ -1,0 +1,109 @@
+name: RDP
+
+on:
+  workflow_dispatch:
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 3600
+
+    steps:
+      # ===============================
+      # ENABLE RDP & FIREWALL
+      # ===============================
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+            -Name "fDenyTSConnections" -Value 0 -Force
+
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+            -Name "UserAuthentication" -Value 0 -Force
+
+          netsh advfirewall firewall delete rule name="RDP-Tailscale" 2>$null
+          netsh advfirewall firewall add rule name="RDP-Tailscale" dir=in action=allow protocol=TCP localport=3389
+
+          Restart-Service TermService -Force
+
+      # ===============================
+      # CREATE RDP USER (FIXED PASSWORD)
+      # ===============================
+      - name: Create RDP User
+        run: |
+          $password = "SWT@RDP#2026"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+          if (-not (Get-LocalUser -Name "RDP" -ErrorAction SilentlyContinue)) {
+            New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
+          }
+
+          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+
+          echo "RDP_USER=RDP" >> $env:GITHUB_ENV
+          echo "RDP_PASS=$password" >> $env:GITHUB_ENV
+
+      # ===============================
+      # INSTALL VS CODE (AUTO)
+      # ===============================
+      - name: Install Visual Studio Code
+        run: |
+          $url = "https://update.code.visualstudio.com/latest/win32-x64-user/stable"
+          $installer = "$env:TEMP\vscode.exe"
+
+          Invoke-WebRequest -Uri $url -OutFile $installer
+          Start-Process $installer -ArgumentList "/verysilent /norestart /mergetasks=!runcode" -Wait
+          Remove-Item $installer -Force
+
+      # ===============================
+      # INSTALL TAILSCALE
+      # ===============================
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $msi = "$env:TEMP\tailscale.msi"
+
+          Invoke-WebRequest -Uri $tsUrl -OutFile $msi
+          Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /quiet /norestart" -Wait
+          Remove-Item $msi -Force
+
+      # ===============================
+      # CONNECT TAILSCALE
+      # ===============================
+      - name: Start Tailscale
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up `
+            --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} `
+            --hostname=gh-rdp-$env:GITHUB_RUN_ID
+
+          Start-Sleep 10
+          $ip = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+          echo "TS_IP=$ip" >> $env:GITHUB_ENV
+
+      # ===============================
+      # VERIFY RDP
+      # ===============================
+      - name: Verify RDP
+        run: |
+          Test-NetConnection -ComputerName $env:TS_IP -Port 3389
+
+      # ===============================
+      # KEEP RUNNER ALIVE
+      # ===============================
+      - name: RDP ACCESS DETAILS
+        run: |
+          Write-Host ""
+          Write-Host "===================================="
+          Write-Host " RDP READY"
+          Write-Host "------------------------------------"
+          Write-Host " Address  : $env:TS_IP"
+          Write-Host " Username : RDP"
+          Write-Host " Password : $env:RDP_PASS"
+          Write-Host " VS Code  : INSTALLED"
+          Write-Host "===================================="
+          Write-Host ""
+
+          while ($true) {
+            Write-Host "[$(Get-Date)] RDP ACTIVE"
+            Start-Sleep 300
+          }
