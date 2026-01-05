@@ -44,18 +44,6 @@ jobs:
           echo "RDP_PASS=$password" >> $env:GITHUB_ENV
 
       # ===============================
-      # INSTALL VS CODE (AUTO)
-      # ===============================
-      - name: Install Visual Studio Code
-        run: |
-          $url = "https://update.code.visualstudio.com/latest/win32-x64-user/stable"
-          $installer = "$env:TEMP\vscode.exe"
-
-          Invoke-WebRequest -Uri $url -OutFile $installer
-          Start-Process $installer -ArgumentList "/verysilent /norestart /mergetasks=!runcode" -Wait
-          Remove-Item $installer -Force
-
-      # ===============================
       # INSTALL TAILSCALE
       # ===============================
       - name: Install Tailscale
